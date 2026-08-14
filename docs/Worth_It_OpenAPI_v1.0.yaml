@@ -1,0 +1,1266 @@
+openapi: 3.1.0
+info:
+  title: Worth It API
+  version: 1.0.0
+  description: Internal REST API contract for the Worth It mobile app MVP. All monetary amounts use integer minor
+    units plus an ISO 4217 currency code.
+servers:
+- url: https://api.worthit.app/v1
+  description: Production
+- url: https://staging-api.worthit.app/v1
+  description: Staging
+security:
+- bearerAuth: []
+tags:
+- name: Account
+- name: Scans
+- name: Analysis
+- name: Comparables
+- name: Ads
+- name: Subscriptions
+- name: Inventory
+- name: Reference
+- name: Webhooks
+paths:
+  /me:
+    get:
+      summary: Get current account
+      tags:
+      - Account
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /me/settings:
+    patch:
+      summary: Update account settings
+      tags:
+      - Account
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                preferred_currency:
+                  type: string
+                notifications_enabled:
+                  type: boolean
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /account-deletion:
+    post:
+      summary: Request account deletion
+      tags:
+      - Account
+      responses:
+        '202':
+          description: Deletion accepted
+        '401':
+          description: Unauthorized
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - confirmation
+              properties:
+                confirmation:
+                  type: string
+                  const: DELETE
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /scans:
+    post:
+      summary: Create scan
+      tags:
+      - Scans
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scan'
+        '402':
+          description: No scan entitlement
+        '409':
+          description: Idempotency conflict
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScanInput'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+    get:
+      summary: List saved scans
+      tags:
+      - Scans
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Scan'
+                  next_cursor:
+                    type: string
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /scans/{scan_id}:
+    get:
+      summary: Get scan
+      tags:
+      - Scans
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scan'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: scan_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      summary: Delete scan
+      tags:
+      - Scans
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not found
+      parameters:
+      - name: scan_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /scans/{scan_id}/upload-urls:
+    post:
+      summary: Create signed image upload URLs
+      tags:
+      - Scans
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uploads:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        image_id:
+                          type: string
+                          format: uuid
+                        upload_url:
+                          type: string
+                          format: uri
+                        object_path:
+                          type: string
+                        expires_at:
+                          type: string
+                          format: date-time
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - files
+              properties:
+                files:
+                  type: array
+                  minItems: 1
+                  maxItems: 6
+                  items:
+                    type: object
+                    required:
+                    - content_type
+                    - size_bytes
+                    properties:
+                      content_type:
+                        type: string
+                        enum:
+                        - image/jpeg
+                        - image/png
+                        - image/heic
+                      size_bytes:
+                        type: integer
+                        maximum: 12582912
+      parameters:
+      - name: scan_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /scans/{scan_id}/identify:
+    post:
+      summary: Start item identification
+      tags:
+      - Analysis
+      responses:
+        '202':
+          description: Identification started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scan'
+        '409':
+          description: Invalid scan state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                barcode:
+                  type: string
+      parameters:
+      - name: scan_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /scans/{scan_id}/item:
+    patch:
+      summary: Confirm or correct item details
+      tags:
+      - Scans
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scan'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItemDetails'
+      parameters:
+      - name: scan_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /scans/{scan_id}/analyze:
+    post:
+      summary: Start market analysis
+      tags:
+      - Analysis
+      responses:
+        '202':
+          description: Analysis accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scan'
+        '402':
+          description: No scan entitlement
+        '409':
+          description: Invalid scan state or duplicate request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_profit:
+                  $ref: '#/components/schemas/Money'
+                target_roi_percent:
+                  type: number
+      parameters:
+      - name: scan_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /scans/{scan_id}/cancel:
+    post:
+      summary: Cancel active analysis
+      tags:
+      - Analysis
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scan'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {}
+      parameters:
+      - name: scan_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /scans/{scan_id}/comparables:
+    get:
+      summary: List analysis comparables
+      tags:
+      - Comparables
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Comparable'
+                  data_freshness_at:
+                    type: string
+                    format: date-time
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: scan_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+  /ad-rewards/challenges:
+    post:
+      summary: Create rewarded-ad verification challenge
+      tags:
+      - Ads
+      responses:
+        '201':
+          description: Challenge created
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - provider
+              properties:
+                provider:
+                  type: string
+                placement:
+                  type: string
+                  const: scan_unlock
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /ad-rewards/claims:
+    post:
+      summary: Claim one scan after verified ad completion
+      tags:
+      - Ads
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - challenge_id
+              - provider_transaction_id
+              properties:
+                challenge_id:
+                  type: string
+                  format: uuid
+                provider_transaction_id:
+                  type: string
+                verification_payload:
+                  type: object
+                  additionalProperties: true
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /subscription:
+    get:
+      summary: Get subscription entitlement
+      tags:
+      - Subscriptions
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plan:
+                    type: string
+                  is_active:
+                    type: boolean
+                  expires_at:
+                    type: string
+                    format: date-time
+                  store:
+                    type: string
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /subscription/restore:
+    post:
+      summary: Reconcile restored store purchases
+      tags:
+      - Subscriptions
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reconciled:
+                    type: boolean
+                  plan:
+                    type: string
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                app_user_id:
+                  type: string
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /inventory:
+    get:
+      summary: List premium inventory
+      tags:
+      - Inventory
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/InventoryItem'
+                  next_cursor:
+                    type: string
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Add scan or manual item to inventory
+      tags:
+      - Inventory
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryItem'
+        '403':
+          description: Premium required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scan_id:
+                  type: string
+                  format: uuid
+                title:
+                  type: string
+                cost_basis:
+                  $ref: '#/components/schemas/Money'
+                purchase_date:
+                  type: string
+                  format: date
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /inventory/{inventory_id}:
+    patch:
+      summary: Update inventory item
+      tags:
+      - Inventory
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryItem'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                listing_price:
+                  $ref: '#/components/schemas/Money'
+                listing_platform:
+                  type: string
+                notes:
+                  type: string
+      parameters:
+      - name: inventory_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+    delete:
+      summary: Delete inventory item
+      tags:
+      - Inventory
+      responses:
+        '204':
+          description: Deleted
+        '403':
+          description: Premium required
+      parameters:
+      - name: inventory_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /inventory/{inventory_id}/sale:
+    post:
+      summary: Record a completed sale
+      tags:
+      - Inventory
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryItem'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - sale_price
+              - sale_date
+              properties:
+                sale_price:
+                  $ref: '#/components/schemas/Money'
+                sale_date:
+                  type: string
+                  format: date
+                marketplace_fees:
+                  $ref: '#/components/schemas/Money'
+                outbound_shipping:
+                  $ref: '#/components/schemas/Money'
+                other_costs:
+                  $ref: '#/components/schemas/Money'
+      parameters:
+      - name: inventory_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/IdempotencyKey'
+  /currencies:
+    get:
+      summary: List supported display currencies
+      tags:
+      - Reference
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code:
+                          type: string
+                        symbol:
+                          type: string
+                        minor_units:
+                          type: integer
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: []
+  /webhooks/revenuecat:
+    post:
+      summary: Receive RevenueCat entitlement events
+      tags:
+      - Webhooks
+      responses:
+        '204':
+          description: Accepted
+        '401':
+          description: Invalid signature
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      security:
+      - webhookSignature: []
+  /webhooks/ad-provider:
+    post:
+      summary: Receive ad provider server-side verification
+      tags:
+      - Webhooks
+      responses:
+        '204':
+          description: Accepted
+        '401':
+          description: Invalid signature
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      security:
+      - webhookSignature: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    webhookSignature:
+      type: apiKey
+      in: header
+      name: X-Webhook-Signature
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    Money:
+      type: object
+      required:
+      - amount_minor
+      - currency
+      properties:
+        amount_minor:
+          type: integer
+          description: Amount in the currency minor unit, e.g. 1299 = $12.99.
+        currency:
+          type: string
+          pattern: ^[A-Z]{3}$
+    Error:
+      type: object
+      required:
+      - error
+      - request_id
+      properties:
+        error:
+          type: object
+          required:
+          - code
+          - message
+          - retryable
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            retryable:
+              type: boolean
+            details:
+              type: object
+              additionalProperties: true
+        request_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    User:
+      type: object
+      required:
+      - id
+      - preferred_currency
+      - plan
+      - scan_balance
+      properties:
+        id:
+          type: string
+          format: uuid
+        preferred_currency:
+          type: string
+        plan:
+          type: string
+          enum:
+          - free
+          - premium
+        scan_balance:
+          type: object
+          properties:
+            introductory_remaining:
+              type: integer
+            rewarded_remaining:
+              type: integer
+            unlimited:
+              type: boolean
+        created_at:
+          type: string
+          format: date-time
+    ScanInput:
+      type: object
+      required:
+      - preferred_currency
+      properties:
+        preferred_currency:
+          type: string
+          pattern: ^[A-Z]{3}$
+        purchase_price:
+          $ref: '#/components/schemas/Money'
+        category_hint:
+          type: string
+        source_context:
+          type: string
+          enum:
+          - thrift_store
+          - marketplace
+          - garage_sale
+          - swap_meet
+          - other
+    ItemDetails:
+      type: object
+      required:
+      - title
+      - category
+      - condition
+      properties:
+        title:
+          type: string
+        brand:
+          type: string
+        model:
+          type: string
+        category:
+          type: string
+        condition:
+          type: string
+          enum:
+          - new
+          - open_box
+          - excellent
+          - good
+          - fair
+          - parts_or_repair
+        attributes:
+          type: object
+          additionalProperties:
+            type: string
+        accessories:
+          type: array
+          items:
+            type: string
+        repair_cost:
+          $ref: '#/components/schemas/Money'
+        outbound_shipping:
+          $ref: '#/components/schemas/Money'
+        taxes_paid:
+          $ref: '#/components/schemas/Money'
+        notes:
+          type: string
+    Comparable:
+      type: object
+      required:
+      - id
+      - source
+      - title
+      - price_original
+      - status
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        source_reference:
+          type: string
+        title:
+          type: string
+        condition:
+          type: string
+        price_original:
+          $ref: '#/components/schemas/Money'
+        shipping_original:
+          $ref: '#/components/schemas/Money'
+        price_display:
+          $ref: '#/components/schemas/Money'
+        status:
+          type: string
+          enum:
+          - sold
+          - active
+        event_date:
+          type: string
+          format: date-time
+        match_score:
+          type: number
+          minimum: 0
+          maximum: 1
+    AnalysisResult:
+      type: object
+      required:
+      - worth_score
+      - confidence
+      - quick_return
+      - normal_return
+      - maximum_return
+      - estimated_net_profit
+      - roi_percent
+      - maximum_buy_price
+      - calculation_version
+      properties:
+        worth_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        confidence:
+          type: string
+          enum:
+          - low
+          - medium
+          - high
+        quick_return:
+          $ref: '#/components/schemas/Money'
+        normal_return:
+          $ref: '#/components/schemas/Money'
+        maximum_return:
+          $ref: '#/components/schemas/Money'
+        estimated_net_profit:
+          $ref: '#/components/schemas/Money'
+        roi_percent:
+          type: number
+        maximum_buy_price:
+          $ref: '#/components/schemas/Money'
+        comparable_count:
+          type: integer
+        freshness_at:
+          type: string
+          format: date-time
+        calculation_version:
+          type: string
+        warnings:
+          type: array
+          items:
+            type: string
+    Scan:
+      type: object
+      required:
+      - id
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - draft
+          - uploaded
+          - identifying
+          - ready
+          - analyzing
+          - completed
+          - identification_failed
+          - analysis_failed
+          - cancelled
+        input:
+          $ref: '#/components/schemas/ScanInput'
+        item:
+          $ref: '#/components/schemas/ItemDetails'
+        analysis:
+          $ref: '#/components/schemas/AnalysisResult'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    InventoryItem:
+      type: object
+      required:
+      - id
+      - status
+      - cost_basis
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        scan_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - acquired
+          - listed
+          - sold
+          - archived
+        title:
+          type: string
+        cost_basis:
+          $ref: '#/components/schemas/Money'
+        listing_price:
+          $ref: '#/components/schemas/Money'
+        sale_price:
+          $ref: '#/components/schemas/Money'
+        realized_profit:
+          $ref: '#/components/schemas/Money'
+        created_at:
+          type: string
+          format: date-time
