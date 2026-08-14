@@ -5,6 +5,7 @@ import { ApiError, mapDatabaseError } from "../lib/errors.js";
 import { safeEqual } from "../lib/hash.js";
 import { serviceSupabase } from "../lib/supabase.js";
 import { parseBody } from "../lib/validation.js";
+import type { Json } from "../database.types.js";
 
 const RevenueCatEvent = z.object({
   id: z.string().min(1),
@@ -61,7 +62,7 @@ export const revenueCatWebhookRoutes: FastifyPluginAsync = async (app) => {
       user_id: event.app_user_id,
       signature_verified: true,
       processing_status: mapping && entitlementMatches ? "verified" : "processed",
-      payload: body,
+      payload: JSON.parse(JSON.stringify(body)) as Json,
       verified_at: new Date().toISOString(),
       processed_at: mapping && entitlementMatches ? null : new Date().toISOString(),
       retention_until: new Date(Date.now() + 365 * 86_400_000).toISOString(),
