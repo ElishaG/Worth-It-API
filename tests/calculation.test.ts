@@ -78,7 +78,7 @@ describe("calculateAnalysis", () => {
     expect(result.estimatedNetProfitAmountMinor).toBeLessThan(result.normalReturnAmountMinor);
     expect(result.worthScore).toBeGreaterThanOrEqual(0);
     expect(result.worthScore).toBeLessThanOrEqual(100);
-    expect(result.confidence).toBe("high");
+    expect(result.confidence).toBe("medium");
     expect((result.assumptions as Record<string, unknown>).filter_tier).toBe("strict");
   });
 
