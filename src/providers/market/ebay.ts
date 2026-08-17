@@ -40,28 +40,59 @@ function toMinor(value: string): number {
 
 const SEARCH_STOP_WORDS = new Set([
   "the", "and", "for", "with", "new", "used", "item", "official", "genuine",
-  "wireless", "controller", "console", "edition", "colour", "color",
+  "wireless", "controller", "console", "edition", "colour", "color", "black", "white",
+  "red", "blue", "green", "silver", "gold", "gray", "grey", "inch", "inches",
 ]);
 
+function cleanSearchWords(value: string): string[] {
+  return value.toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 2 && !SEARCH_STOP_WORDS.has(token));
+}
+
 function titleTokens(value: string): Set<string> {
-  return new Set(
-    value.toLowerCase()
-      .replace(/[^a-z0-9]+/g, " ")
-      .split(/\s+/)
-      .filter((token) => token.length >= 2 && !SEARCH_STOP_WORDS.has(token)),
-  );
+  return new Set(cleanSearchWords(value));
 }
 
 function titleMatchScore(input: MarketSearchInput, listingTitle: string, index: number): number {
-  const target = titleTokens([input.brand, input.model, input.title].filter(Boolean).join(" "));
+  const titleTarget = titleTokens(input.title);
   const candidate = titleTokens(listingTitle);
-  if (target.size === 0) return Math.max(0.5, 0.84 - index * 0.008);
+  const brandTokens = titleTokens(input.brand ?? "");
+  const modelTokens = titleTokens(input.model ?? "");
 
-  let matched = 0;
-  for (const token of target) if (candidate.has(token)) matched += 1;
-  const overlap = matched / target.size;
-  const positionPenalty = Math.min(0.12, index * 0.003);
-  return Math.max(0.35, Math.min(0.98, 0.48 + overlap * 0.5 - positionPenalty));
+  const overlapRatio = (target: Set<string>) => {
+    if (target.size === 0) return 1;
+    let matched = 0;
+    for (const token of target) if (candidate.has(token)) matched += 1;
+    return matched / target.size;
+  };
+
+  const titleOverlap = overlapRatio(titleTarget);
+  const brandOverlap = overlapRatio(brandTokens);
+  const modelOverlap = overlapRatio(modelTokens);
+  const positionPenalty = Math.min(0.10, index * 0.0025);
+
+  // Brand/model carry more weight than descriptive AI title text. This keeps
+  // broader fallback searches useful without allowing unrelated listings in.
+  const identityWeight = modelTokens.size > 0 ? 0.42 : brandTokens.size > 0 ? 0.28 : 0;
+  const brandWeight = brandTokens.size > 0 ? 0.20 : 0;
+  const titleWeight = Math.max(0.38, 1 - identityWeight - brandWeight);
+  const weighted = titleOverlap * titleWeight + brandOverlap * brandWeight + modelOverlap * identityWeight;
+  return Math.max(0.30, Math.min(0.99, 0.34 + weighted * 0.64 - positionPenalty));
+}
+
+function uniqueQueries(input: MarketSearchInput): string[] {
+  const cleanTitle = cleanSearchWords(input.title).slice(0, 8).join(" ");
+  const productFamily = cleanSearchWords(input.title).slice(0, 5).join(" ");
+  const raw = [
+    [input.brand, input.model, input.title].filter(Boolean).join(" "),
+    [input.brand, input.model].filter(Boolean).join(" "),
+    [input.brand, cleanTitle].filter(Boolean).join(" "),
+    [input.brand, productFamily].filter(Boolean).join(" "),
+    cleanTitle,
+  ];
+  return [...new Set(raw.map((query) => query.replace(/\s+/g, " ").trim()).filter(Boolean))].slice(0, 5);
 }
 
 export class EbayMarketProvider implements MarketProvider {
@@ -75,30 +106,19 @@ export class EbayMarketProvider implements MarketProvider {
     const basic = Buffer.from(`${env.EBAY_CLIENT_ID}:${env.EBAY_CLIENT_SECRET}`).toString("base64");
     const response = await fetch("https://api.ebay.com/identity/v1/oauth2/token", {
       method: "POST",
-      headers: {
-        Authorization: `Basic ${basic}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        scope: "https://api.ebay.com/oauth/api_scope",
-      }),
+      headers: { Authorization: `Basic ${basic}`, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "client_credentials", scope: "https://api.ebay.com/oauth/api_scope" }),
     });
-    if (!response.ok) {
-      throw new ApiError(502, "ebay_auth_failed", `eBay authentication failed with status ${response.status}.`, true);
-    }
+    if (!response.ok) throw new ApiError(502, "ebay_auth_failed", `eBay authentication failed with status ${response.status}.`, true);
     const body = z.object({ access_token: z.string(), expires_in: z.number() }).parse(await response.json());
     this.token = { value: body.access_token, expiresAt: Date.now() + body.expires_in * 1000 };
     return this.token.value;
   }
 
-  async search(input: MarketSearchInput) {
-    const token = await this.getToken();
-    const query = [input.brand, input.model, input.title].filter(Boolean).join(" ").slice(0, 200);
+  private async searchQuery(token: string, query: string): Promise<z.infer<typeof ItemSummary>[]> {
     const url = new URL("https://api.ebay.com/buy/browse/v1/item_summary/search");
-    url.searchParams.set("q", query);
+    url.searchParams.set("q", query.slice(0, 200));
     url.searchParams.set("limit", "50");
-
     const response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -110,9 +130,24 @@ export class EbayMarketProvider implements MarketProvider {
       const detail = await response.text();
       throw new ApiError(502, "ebay_search_failed", `eBay search failed with status ${response.status}.`, true, { detail: detail.slice(0, 500) });
     }
+    return SearchResponse.parse(await response.json()).itemSummaries;
+  }
 
-    const parsed = SearchResponse.parse(await response.json());
-    const comparables = parsed.itemSummaries.flatMap((item, index) => {
+  async search(input: MarketSearchInput) {
+    const token = await this.getToken();
+    const queries = uniqueQueries(input);
+    const collected = new Map<string, z.infer<typeof ItemSummary>>();
+    const attempts: string[] = [];
+
+    for (const query of queries) {
+      attempts.push(query);
+      const items = await this.searchQuery(token, query);
+      for (const item of items) collected.set(item.itemId, item);
+      // Enough candidates to let the calculation layer rank/filter reliably.
+      if (collected.size >= 24) break;
+    }
+
+    const comparables = [...collected.values()].flatMap((item, index) => {
       if (item.price.currency !== input.displayCurrency) return [];
       const shipping = item.shippingOptions?.[0]?.shippingCost;
       const shippingMinor = shipping?.currency === input.displayCurrency ? toMinor(shipping.value) : 0;
@@ -138,6 +173,7 @@ export class EbayMarketProvider implements MarketProvider {
           buying_options: item.buyingOptions ?? [],
           condition_id: item.conditionId ?? null,
           source_url: item.itemWebUrl ?? null,
+          search_attempts: attempts,
         },
         sourceUrl: item.itemWebUrl ?? null,
       }];
@@ -147,6 +183,7 @@ export class EbayMarketProvider implements MarketProvider {
       comparables,
       warnings: [
         "eBay Browse API results are active listings, not verified sold prices.",
+        `Progressive marketplace search used ${attempts.length} query level${attempts.length === 1 ? "" : "s"}.`,
         "Cross-currency listings are excluded until an FX provider is connected.",
       ],
       freshnessAt: new Date().toISOString(),

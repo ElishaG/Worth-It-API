@@ -49,6 +49,8 @@ const CONDITION_RANK: Record<Database["public"]["Enums"]["item_condition"], numb
   new: 8,
 };
 
+type FilterTier = "strict" | "balanced" | "broad";
+
 function normalize(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -62,10 +64,21 @@ function hasUnmatchedVariantTerm(targetTitle: string, comparableTitle: string): 
 function conditionIsCompatible(
   target: Database["public"]["Enums"]["item_condition"],
   candidate: Database["public"]["Enums"]["item_condition"],
+  maximumDistance = 1,
 ): boolean {
   if (target === "unknown" || candidate === "unknown") return true;
   if (target === "for_parts" || candidate === "for_parts") return target === candidate;
-  return Math.abs(CONDITION_RANK[target] - CONDITION_RANK[candidate]) <= 1;
+  return Math.abs(CONDITION_RANK[target] - CONDITION_RANK[candidate]) <= maximumDistance;
+}
+
+function filterTierAccepts(
+  tier: FilterTier,
+  targetCondition: Database["public"]["Enums"]["item_condition"],
+  comparable: MarketComparable,
+): boolean {
+  if (tier === "strict") return comparable.matchScore >= 0.62 && conditionIsCompatible(targetCondition, comparable.condition, 1);
+  if (tier === "balanced") return comparable.matchScore >= 0.54 && conditionIsCompatible(targetCondition, comparable.condition, 2);
+  return comparable.matchScore >= 0.48 && conditionIsCompatible(targetCondition, comparable.condition, 3);
 }
 
 function amountInDisplayCurrency(amount: number | null, currency: string | null, displayCurrency: string, warnings: string[]): number {
@@ -96,23 +109,42 @@ export function calculateAnalysis(input: {
   const warnings = [...(input.providerWarnings ?? [])];
   const displayCurrency = input.scan.preferred_currency;
 
-  const initiallyClassified = input.comparables.map((comparable) => {
-    if (comparable.displayCurrency !== displayCurrency) {
-      return { ...comparable, decision: "excluded" as const, exclusionReason: "currency_mismatch" };
-    }
-    if (comparable.matchScore < 0.62) {
-      return { ...comparable, decision: "excluded" as const, exclusionReason: "low_match_score" };
-    }
-    if (comparable.totalDisplayAmountMinor <= 0) {
-      return { ...comparable, decision: "excluded" as const, exclusionReason: "invalid_price" };
-    }
-    if (hasUnmatchedVariantTerm(input.item.title, comparable.title)) {
-      return { ...comparable, decision: "excluded" as const, exclusionReason: "variant_or_accessory_mismatch" };
-    }
-    if (!conditionIsCompatible(input.item.condition, comparable.condition)) {
-      return { ...comparable, decision: "excluded" as const, exclusionReason: "condition_mismatch" };
-    }
+  // Hard safety filters never relax. These stop clearly wrong variants, parts-only
+  // listings, invalid prices and currencies from contaminating an estimate.
+  const hardClassified = input.comparables.map((comparable) => {
+    if (comparable.displayCurrency !== displayCurrency) return { ...comparable, decision: "excluded" as const, exclusionReason: "currency_mismatch" };
+    if (comparable.totalDisplayAmountMinor <= 0) return { ...comparable, decision: "excluded" as const, exclusionReason: "invalid_price" };
+    if (hasUnmatchedVariantTerm(input.item.title, comparable.title)) return { ...comparable, decision: "excluded" as const, exclusionReason: "variant_or_accessory_mismatch" };
     return { ...comparable, decision: "included" as const, exclusionReason: null };
+  });
+
+  const eligible = hardClassified.filter((item) => item.decision === "included");
+  const strictCount = eligible.filter((item) => filterTierAccepts("strict", input.item.condition, item)).length;
+  const balancedCount = eligible.filter((item) => filterTierAccepts("balanced", input.item.condition, item)).length;
+
+  // Prefer precision, but do not return zero just because recognition included too
+  // many descriptive details. Relax only relevance/condition tolerance, never the
+  // hard variant/accessory safety rules above.
+  const filterTier: FilterTier = strictCount >= 3
+    ? "strict"
+    : balancedCount >= 3
+      ? "balanced"
+      : "broad";
+
+  if (filterTier === "balanced") warnings.push("Marketplace filtering was slightly broadened because fewer than three strict matches were found.");
+  if (filterTier === "broad") warnings.push("Marketplace filtering used a broad fallback because the item had very few close matches. Review the comparables before relying on the estimate.");
+
+  const initiallyClassified = hardClassified.map((comparable) => {
+    if (comparable.decision === "excluded") return comparable;
+    if (!filterTierAccepts(filterTier, input.item.condition, comparable)) {
+      const conditionCompatible = conditionIsCompatible(input.item.condition, comparable.condition, filterTier === "strict" ? 1 : filterTier === "balanced" ? 2 : 3);
+      return {
+        ...comparable,
+        decision: "excluded" as const,
+        exclusionReason: conditionCompatible ? "low_match_score" : "condition_mismatch",
+      };
+    }
+    return comparable;
   });
 
   const preliminary = initiallyClassified.filter((item) => item.decision === "included");
@@ -127,7 +159,6 @@ export function calculateAnalysis(input: {
     return comparable;
   });
 
-  // Use the strongest matches only so a broad eBay search cannot overwhelm the estimate.
   const included = classified
     .filter((item) => item.decision === "included")
     .sort((a, b) => b.matchScore - a.matchScore || a.totalDisplayAmountMinor - b.totalDisplayAmountMinor)
@@ -150,9 +181,7 @@ export function calculateAnalysis(input: {
   const quickReturn = sortedPrices.length >= 3 ? Math.round(median * 0.80) : 0;
   const normalReturn = sortedPrices.length >= 3 ? Math.round(median * activeListingAdjustment) : 0;
   const upperQuartile = percentile(sortedPrices, 0.75);
-  const maximumReturn = sortedPrices.length >= 3
-    ? Math.max(normalReturn, Math.round(Math.min(upperQuartile, median * 1.25)))
-    : 0;
+  const maximumReturn = sortedPrices.length >= 3 ? Math.max(normalReturn, Math.round(Math.min(upperQuartile, median * 1.25))) : 0;
 
   const purchasePrice = amountInDisplayCurrency(input.scan.purchase_price_amount_minor, input.scan.purchase_price_currency, displayCurrency, warnings);
   const inboundShipping = amountInDisplayCurrency(input.item.inbound_shipping_amount_minor, input.item.inbound_shipping_currency, displayCurrency, warnings);
@@ -167,22 +196,14 @@ export function calculateAnalysis(input: {
   const roiPercent = normalReturn > 0 && totalInvested > 0 ? Number(((netProfit / totalInvested) * 100).toFixed(4)) : null;
 
   const defaultTargetProfit = Math.round(normalReturn * env.DEFAULT_TARGET_MARGIN_RATE);
-  const roiTargetProfit = input.preferences?.targetRoiPercent !== undefined && totalInvested > 0
-    ? Math.round(totalInvested * (input.preferences.targetRoiPercent / 100))
-    : 0;
+  const roiTargetProfit = input.preferences?.targetRoiPercent !== undefined && totalInvested > 0 ? Math.round(totalInvested * (input.preferences.targetRoiPercent / 100)) : 0;
   const desiredProfit = Math.max(input.preferences?.targetProfitAmountMinor ?? 0, roiTargetProfit, defaultTargetProfit);
   const nonPurchaseCosts = inboundShipping + taxes + repair + otherAcquisition;
-  const maximumBuyPrice = normalReturn > 0
-    ? Math.max(0, normalReturn - marketplaceFee - outboundShipping - nonPurchaseCosts - desiredProfit)
-    : 0;
+  const maximumBuyPrice = normalReturn > 0 ? Math.max(0, normalReturn - marketplaceFee - outboundShipping - nonPurchaseCosts - desiredProfit) : 0;
 
   const soldCount = included.filter((item) => item.listingStatus === "sold").length;
   const activeCount = included.filter((item) => item.listingStatus === "active").length;
-  const confidence: AnalysisCalculation["confidence"] = included.length >= 12
-    ? "high"
-    : included.length >= 5
-      ? "medium"
-      : "low";
+  const confidence: AnalysisCalculation["confidence"] = included.length >= 12 ? "high" : included.length >= 5 ? "medium" : "low";
 
   const roiScore = clamp(((roiPercent ?? 0) / 100) * 35, 0, 35);
   const marginPercent = normalReturn > 0 ? (netProfit / normalReturn) * 100 : 0;
@@ -191,9 +212,7 @@ export function calculateAnalysis(input: {
   const confidenceScore = confidence === "high" ? 20 : confidence === "medium" ? 13 : 6;
   const spread = normalReturn > 0 ? (maximumReturn - quickReturn) / normalReturn : 1;
   const spreadPenalty = clamp(spread * 15, 0, 15);
-  const worthScore = normalReturn > 0
-    ? Math.round(clamp(roiScore + marginScore + comparableScore + confidenceScore - spreadPenalty, 0, 100))
-    : 0;
+  const worthScore = normalReturn > 0 ? Math.round(clamp(roiScore + marginScore + comparableScore + confidenceScore - spreadPenalty, 0, 100)) : 0;
 
   return {
     worthScore,
@@ -213,7 +232,8 @@ export function calculateAnalysis(input: {
       fixed_fee_amount_minor: env.DEFAULT_FIXED_FEE_AMOUNT_MINOR,
       target_margin_rate: env.DEFAULT_TARGET_MARGIN_RATE,
       desired_profit_amount_minor: desiredProfit,
-      pricing_method: "filtered_median_v2",
+      pricing_method: "progressive_filtered_median_v3",
+      filter_tier: filterTier,
       active_listing_adjustment: activeListingAdjustment,
       quick_sale_multiplier: 0.80,
       maximum_median_multiplier: 1.25,

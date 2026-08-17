@@ -78,17 +78,29 @@ describe("calculateAnalysis", () => {
     expect(result.estimatedNetProfitAmountMinor).toBeLessThan(result.normalReturnAmountMinor);
     expect(result.worthScore).toBeGreaterThanOrEqual(0);
     expect(result.worthScore).toBeLessThanOrEqual(100);
-    expect(result.confidence).toBe("high");
+    expect(result.confidence).toBe("medium");
+    expect((result.assumptions as Record<string, unknown>).filter_tier).toBe("strict");
   });
 
   it("excludes mismatched currencies", () => {
-    const result = calculateAnalysis({
-      scan,
-      item,
-      comparables: [{ ...comparables[0]!, displayCurrency: "USD" }],
-    });
+    const result = calculateAnalysis({ scan, item, comparables: [{ ...comparables[0]!, displayCurrency: "USD" }] });
     expect(result.comparableCount).toBe(0);
     expect(result.normalReturnAmountMinor).toBe(0);
+  });
+
+  it("uses a balanced fallback instead of returning zero when strict matches are sparse", () => {
+    const relaxed = [16_000, 17_000, 18_000, 19_000].map((amount, index) => ({
+      ...comparables[0]!,
+      sourceReference: `relaxed-${index}`,
+      totalDisplayAmountMinor: amount,
+      priceOriginalAmountMinor: amount,
+      matchScore: 0.58,
+      condition: "like_new" as const,
+    }));
+    const result = calculateAnalysis({ scan, item, comparables: relaxed });
+    expect(result.comparableCount).toBe(4);
+    expect(result.normalReturnAmountMinor).toBeGreaterThan(0);
+    expect((result.assumptions as Record<string, unknown>).filter_tier).toBe("balanced");
   });
 });
 
