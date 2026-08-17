@@ -5,7 +5,7 @@ import { ApiError } from "../../lib/errors.js";
 import type { RecognitionInput, RecognitionProvider } from "./types.js";
 
 const conditions = ["new", "open_box", "like_new", "excellent", "good", "fair", "poor", "for_parts", "unknown"] as const;
-const categories = ["electronics", "gaming_consoles", "collectibles", "clothing", "shoes", "tools", "furniture", "other"] as const;
+const categories = ["electronics", "gaming_consoles", "collectibles", "trading_cards", "clothing", "shoes", "accessories", "tools", "furniture", "other"] as const;
 
 const ParsedCandidate = z.object({
   title: z.string().min(1),
@@ -76,7 +76,7 @@ export class OpenAIRecognitionProvider implements RecognitionProvider {
     const response = await this.client.responses.create({
       model: env.OPENAI_MODEL,
       input: [
-        { role: "system", content: [{ type: "input_text", text: "Identify resale items from all supplied user photos as views of the same main item unless the images clearly show otherwise. Return up to three ranked candidates. Be conservative: never invent a model number, serial number, authenticity claim, condition, size, colorway, material, edition, capacity, or accessory that is not visually supported. Keep the title concise and search-friendly, but place visually supported variant details in attributes so exact retail lookup can distinguish otherwise identical products. Prioritize attributes such as color/colorway, size, capacity/storage, material, style/variant/edition, and model identifiers when visible. For clothing and shoes, prioritize visible brand, model/style, size, colorway and condition; put uncertain details in uncertainties rather than forcing them into the title." }] },
+        { role: "system", content: [{ type: "input_text", text: "Identify resale items from all supplied user photos as views of the same main item unless the images clearly show otherwise. Return up to three ranked candidates. Choose the best category yourself from electronics, gaming_consoles, collectibles, trading_cards, clothing, shoes, accessories, tools, furniture, or other. Use trading_cards for sports/TCG cards and accessories for items such as wallets, handbags, belts, sunglasses, jewelry, hats, and similar fashion accessories. Be conservative: never invent a model number, serial number, authenticity claim, condition, size, colorway, material, edition, capacity, or accessory that is not visually supported. Keep the title concise and search-friendly, but place visually supported variant details in attributes so exact retail lookup can distinguish otherwise identical products. Prioritize attributes such as color/colorway, size, capacity/storage, material, style/variant/edition, and model identifiers when visible. For clothing and shoes, prioritize visible brand, model/style, size, colorway and condition; put uncertain details in uncertainties rather than forcing them into the title." }] },
         { role: "user", content: [{ type: "input_text", text: `Identify the main item in these photos for resale-market search. Keep the title concise; do not stuff every visible attribute into it. Put exact visible variant details in attributes instead.\n${context}` }, ...imageParts] },
       ],
       text: { format: { type: "json_schema", name: "worth_it_item_candidates", strict: true, schema: responseSchema } },
@@ -101,7 +101,7 @@ export class OpenAIRecognitionProvider implements RecognitionProvider {
       uncertainties: candidate.uncertainties,
       provider: "openai",
       providerModel: env.OPENAI_MODEL,
-      promptVersion: "recognition-v1.2-variant-aware",
+      promptVersion: "recognition-v1.3-ai-category",
     }));
   }
 }
