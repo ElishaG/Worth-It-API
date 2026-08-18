@@ -54,6 +54,15 @@ function mapAnalysis(analysis: AnalysisRow | null): Json | null {
   };
 }
 
+function isMissingStorageObject(error: unknown): boolean {
+  const value = error as { message?: string; status?: number; statusCode?: number; error?: string };
+  const message = `${value?.message ?? ""} ${value?.error ?? ""}`.toLowerCase();
+  return value?.status === 404
+    || value?.statusCode === 404
+    || message.includes("object not found")
+    || message.includes("not found");
+}
+
 async function getPrimaryImage(userId: string, scanId: string): Promise<{ image_url: string | null; image_count: number }> {
   const { data: images, error } = await serviceSupabase
     .from("scan_images")
@@ -67,7 +76,12 @@ async function getPrimaryImage(userId: string, scanId: string): Promise<{ image_
   const { data: signed, error: signedError } = await serviceSupabase.storage
     .from(first.storage_bucket)
     .createSignedUrl(first.storage_path, 60 * 60);
-  if (signedError) throw mapDatabaseError(signedError);
+  if (signedError) {
+    if (isMissingStorageObject(signedError)) {
+      return { image_url: null, image_count: images?.length ?? 0 };
+    }
+    throw mapDatabaseError(signedError);
+  }
   return { image_url: signed?.signedUrl ?? null, image_count: images?.length ?? 0 };
 }
 
