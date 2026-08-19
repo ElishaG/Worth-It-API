@@ -130,3 +130,33 @@ it("excludes unmatched premium variants and parts listings", () => {
   expect(result.normalReturnAmountMinor).toBe(0);
   expect(result.includedComparables.filter((entry) => entry.decision === "excluded")).toHaveLength(2);
 });
+
+it("filters iPhone cases and screen protectors from device comparables", () => {
+  const iphone = { ...item, title: "Apple iPhone 15 Pro", brand: "Apple", model: "iPhone 15 Pro" };
+  const iphoneComparables = [
+    { ...comparables[0]!, sourceReference: "device-1", title: "Apple iPhone 15 Pro 128GB Unlocked", totalDisplayAmountMinor: 82_000 },
+    { ...comparables[0]!, sourceReference: "device-2", title: "Apple iPhone 15 Pro 256GB Unlocked", totalDisplayAmountMinor: 90_000 },
+    { ...comparables[0]!, sourceReference: "device-3", title: "Apple iPhone 15 Pro 128GB Smartphone", totalDisplayAmountMinor: 84_000 },
+    { ...comparables[0]!, sourceReference: "case", title: "Case for Apple iPhone 15 Pro MagSafe Cover", totalDisplayAmountMinor: 2_500 },
+    { ...comparables[0]!, sourceReference: "glass", title: "iPhone 15 Pro Tempered Glass Screen Protector", totalDisplayAmountMinor: 1_500 },
+  ];
+  const result = calculateAnalysis({ scan, item: iphone, comparables: iphoneComparables });
+  expect(result.comparableCount).toBe(3);
+  expect(result.includedComparables.find((entry) => entry.sourceReference === "case")?.exclusionReason).toBe("accessory_only_mismatch");
+  expect(result.includedComparables.find((entry) => entry.sourceReference === "glass")?.exclusionReason).toBe("accessory_only_mismatch");
+  expect(result.normalReturnAmountMinor).toBeGreaterThan(70_000);
+});
+
+it("keeps real iPad device listings even when a case is included", () => {
+  const ipad = { ...item, title: "Apple iPad Air", brand: "Apple", model: "iPad Air" };
+  const ipadComparables = [
+    { ...comparables[0]!, sourceReference: "ipad-1", title: "Apple iPad Air 256GB WiFi with Case", totalDisplayAmountMinor: 68_000 },
+    { ...comparables[0]!, sourceReference: "ipad-2", title: "Apple iPad Air 128GB Cellular Tablet", totalDisplayAmountMinor: 73_000 },
+    { ...comparables[0]!, sourceReference: "ipad-3", title: "Apple iPad Air 256GB Wi-Fi", totalDisplayAmountMinor: 70_000 },
+    { ...comparables[0]!, sourceReference: "ipad-case", title: "Folio Case Cover for Apple iPad Air", totalDisplayAmountMinor: 3_000 },
+  ];
+  const result = calculateAnalysis({ scan, item: ipad, comparables: ipadComparables });
+  expect(result.comparableCount).toBe(3);
+  expect(result.includedComparables.find((entry) => entry.sourceReference === "ipad-1")?.decision).toBe("included");
+  expect(result.includedComparables.find((entry) => entry.sourceReference === "ipad-case")?.exclusionReason).toBe("accessory_only_mismatch");
+});
