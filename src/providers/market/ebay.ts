@@ -48,8 +48,9 @@ const APPLE_DEVICE_ACCESSORY_TERMS = [
   "case", "cover", "protector", "screen protector", "tempered glass", "privacy glass",
   "charger", "charging cable", "usb cable", "lightning cable", "usb-c cable", "adapter",
   "mount", "holder", "stand", "dock", "skin", "sticker", "wallet", "sleeve", "pouch",
-  "replacement screen", "lcd", "digitizer", "housing", "back glass", "replacement battery",
-  "repair kit", "parts only", "for parts", "keyboard case", "folio", "stylus", "apple pencil",
+  "replacement screen", "lcd", "digitizer", "housing", "back glass", "backglass", "rear glass",
+  "replacement battery", "battery replacement", "repair kit", "parts only", "for parts",
+  "keyboard case", "folio", "stylus", "apple pencil", "frame replacement", "camera lens replacement",
 ];
 
 function cleanSearchWords(value: string): string[] {
@@ -75,10 +76,6 @@ function isAppleDeviceAccessoryTitle(input: MarketSearchInput, listingTitle: str
   if (!isApplePhoneOrTablet(input)) return false;
   const normalized = listingTitle.toLowerCase().replace(/[^a-z0-9+\- ]+/g, " ");
 
-  // Accessory listings frequently contain the device model too (for example
-  // "Case for iPhone 15 Pro"), so model overlap alone is not enough. For an
-  // identified iPhone/iPad scan, reject strong accessory/repair signals before
-  // valuation so cases and replacement parts cannot dominate the comparables.
   return APPLE_DEVICE_ACCESSORY_TERMS.some((term) => {
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
     return new RegExp(`\\b${escaped}\\b`, "i").test(normalized);
@@ -103,8 +100,6 @@ function titleMatchScore(input: MarketSearchInput, listingTitle: string, index: 
   const modelOverlap = overlapRatio(modelTokens);
   const positionPenalty = Math.min(0.10, index * 0.0025);
 
-  // Brand/model carry more weight than descriptive AI title text. This keeps
-  // broader fallback searches useful without allowing unrelated listings in.
   const identityWeight = modelTokens.size > 0 ? 0.42 : brandTokens.size > 0 ? 0.28 : 0;
   const brandWeight = brandTokens.size > 0 ? 0.20 : 0;
   const titleWeight = Math.max(0.38, 1 - identityWeight - brandWeight);
@@ -168,18 +163,30 @@ export class EbayMarketProvider implements MarketProvider {
     const queries = uniqueQueries(input);
     const collected = new Map<string, z.infer<typeof ItemSummary>>();
     const attempts: string[] = [];
+    const appleDeviceSearch = isApplePhoneOrTablet(input);
+    let accessoryListingsRemoved = 0;
 
     for (const query of queries) {
       attempts.push(query);
       const items = await this.searchQuery(token, query);
-      for (const item of items) collected.set(item.itemId, item);
-      // Enough candidates to let the calculation layer rank/filter reliably.
-      if (collected.size >= 24) break;
+      for (const item of items) {
+        if (appleDeviceSearch && isAppleDeviceAccessoryTitle(input, item.title)) {
+          accessoryListingsRemoved += 1;
+          continue;
+        }
+        collected.set(item.itemId, item);
+      }
+
+      // For phones/tablets, count only actual device-looking results before stopping.
+      // The previous raw-result threshold could stop after the first query when most
+      // of those results were cases or repair parts, leaving almost no usable comps.
+      const targetCandidateCount = appleDeviceSearch ? 18 : 24;
+      if (collected.size >= targetCandidateCount) break;
     }
 
-    let accessoryListingsRemoved = 0;
     const comparables = [...collected.values()].flatMap((item, index) => {
       if (item.price.currency !== input.displayCurrency) return [];
+      // Keep this second guard in case a future query path bypasses collection filtering.
       if (isAppleDeviceAccessoryTitle(input, item.title)) {
         accessoryListingsRemoved += 1;
         return [];
