@@ -44,6 +44,14 @@ const SEARCH_STOP_WORDS = new Set([
   "red", "blue", "green", "silver", "gold", "gray", "grey", "inch", "inches",
 ]);
 
+const APPLE_DEVICE_ACCESSORY_TERMS = [
+  "case", "cover", "protector", "screen protector", "tempered glass", "privacy glass",
+  "charger", "charging cable", "usb cable", "lightning cable", "usb-c cable", "adapter",
+  "mount", "holder", "stand", "dock", "skin", "sticker", "wallet", "sleeve", "pouch",
+  "replacement screen", "lcd", "digitizer", "housing", "back glass", "replacement battery",
+  "repair kit", "parts only", "for parts", "keyboard case", "folio", "stylus", "apple pencil",
+];
+
 function cleanSearchWords(value: string): string[] {
   return value.toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
@@ -53,6 +61,28 @@ function cleanSearchWords(value: string): string[] {
 
 function titleTokens(value: string): Set<string> {
   return new Set(cleanSearchWords(value));
+}
+
+function isApplePhoneOrTablet(input: MarketSearchInput): boolean {
+  const identity = [input.brand, input.model, input.title, input.category]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return /\biphone\b|\bipad\b/.test(identity);
+}
+
+function isAppleDeviceAccessoryTitle(input: MarketSearchInput, listingTitle: string): boolean {
+  if (!isApplePhoneOrTablet(input)) return false;
+  const normalized = listingTitle.toLowerCase().replace(/[^a-z0-9+\- ]+/g, " ");
+
+  // Accessory listings frequently contain the device model too (for example
+  // "Case for iPhone 15 Pro"), so model overlap alone is not enough. For an
+  // identified iPhone/iPad scan, reject strong accessory/repair signals before
+  // valuation so cases and replacement parts cannot dominate the comparables.
+  return APPLE_DEVICE_ACCESSORY_TERMS.some((term) => {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+    return new RegExp(`\\b${escaped}\\b`, "i").test(normalized);
+  });
 }
 
 function titleMatchScore(input: MarketSearchInput, listingTitle: string, index: number): number {
@@ -147,8 +177,13 @@ export class EbayMarketProvider implements MarketProvider {
       if (collected.size >= 24) break;
     }
 
+    let accessoryListingsRemoved = 0;
     const comparables = [...collected.values()].flatMap((item, index) => {
       if (item.price.currency !== input.displayCurrency) return [];
+      if (isAppleDeviceAccessoryTitle(input, item.title)) {
+        accessoryListingsRemoved += 1;
+        return [];
+      }
       const shipping = item.shippingOptions?.[0]?.shippingCost;
       const shippingMinor = shipping?.currency === input.displayCurrency ? toMinor(shipping.value) : 0;
       const priceMinor = toMinor(item.price.value);
@@ -184,6 +219,9 @@ export class EbayMarketProvider implements MarketProvider {
       warnings: [
         "eBay Browse API results are active listings, not verified sold prices.",
         `Progressive marketplace search used ${attempts.length} query level${attempts.length === 1 ? "" : "s"}.`,
+        ...(accessoryListingsRemoved > 0
+          ? [`Filtered ${accessoryListingsRemoved} likely iPhone/iPad accessory or replacement-part listing${accessoryListingsRemoved === 1 ? "" : "s"}.`]
+          : []),
         "Cross-currency listings are excluded until an FX provider is connected.",
       ],
       freshnessAt: new Date().toISOString(),
