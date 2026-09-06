@@ -10,6 +10,8 @@ import { createUserSupabase, serviceSupabase } from "../lib/supabase.js";
 import { CurrencySchema, MoneySchema, UuidSchema, parseBody } from "../lib/validation.js";
 import { getOwnedScan, getScanResponse, listScanResponses } from "../services/scanService.js";
 import type { Json } from "../database.types.js";
+import { hasBoundedPremium } from '../services/subscriptionPolicy.js';
+import { env } from '../config/env.js';
 
 const sourceContexts = ["thrift_store", "marketplace", "garage_sale", "swap_meet", "other"] as const;
 const conditions = ["new", "open_box", "like_new", "excellent", "good", "fair", "poor", "for_parts", "unknown"] as const;
@@ -60,11 +62,13 @@ function extensionFor(contentType: string, filename?: string): string {
 async function checkScanEntitlement(userId: string): Promise<void> {
   const { data, error } = await serviceSupabase
     .from("account_entitlements")
-    .select("available_scan_credits, premium_active, premium_expires_at")
+    .select("available_scan_credits, premium_active, premium_expires_at, premium_grace_ends_at, premium_store, premium_product_id")
     .eq("user_id", userId)
     .single();
   if (error) throw mapDatabaseError(error);
-  const premium = data.premium_active && (!data.premium_expires_at || new Date(data.premium_expires_at) > new Date());
+  const verified = await serviceSupabase.rpc('is_premium_active', { p_user_id: userId });
+  if (verified.error) throw mapDatabaseError(verified.error);
+  const premium = verified.data === true && hasBoundedPremium(data, env.REVENUECAT_MONTHLY_PRODUCT_ID ?? '');
   if (!premium && data.available_scan_credits <= 0) {
     throw new ApiError(402, "scan_entitlement_required", "No free scan credits remain. Watch a rewarded ad or upgrade to Premium.");
   }
