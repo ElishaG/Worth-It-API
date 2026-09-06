@@ -1689,6 +1689,21 @@ export type Database = {
       }
     }
     Functions: {
+      reconcile_revenuecat_entitlement: {
+        Args: {
+          p_user_id: string
+          p_observed_at: string
+          p_active: boolean
+          p_expires_at: string | null
+          p_grace_ends_at: string | null
+          p_started_at: string | null
+          p_product_id: string | null
+          p_store: string | null
+          p_source_event_id: string | null
+          p_environment: string | null
+        }
+        Returns: boolean
+      }
       apply_premium_entitlement: {
         Args: {
           p_active: boolean

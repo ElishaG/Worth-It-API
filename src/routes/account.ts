@@ -6,15 +6,25 @@ import { runIdempotent } from "../lib/idempotency.js";
 import { createUserSupabase, serviceSupabase } from "../lib/supabase.js";
 import { parseBody } from "../lib/validation.js";
 import type { Json } from "../database.types.js";
+import { reconcileSubscription } from '../services/subscriptionService.js';
+import { hasBoundedPremium } from '../services/subscriptionPolicy.js';
+import { env } from '../config/env.js';
 
-async function accountResponse(userId: string): Promise<Json> {
-  const [{ data: profile, error: profileError }, { data: entitlement, error: entitlementError }] = await Promise.all([
+async function accountResponse(userId: string, refreshSubscription = false): Promise<Json> {
+  if (refreshSubscription) {
+    // Existing app builds and missed webhooks converge on account reads too.
+    // On an outage, only a previously verified, finite database snapshot remains usable.
+    try { await reconcileSubscription(userId); } catch { /* Check bounded cached access below. */ }
+  }
+  const [{ data: profile, error: profileError }, { data: entitlement, error: entitlementError }, verified] = await Promise.all([
     serviceSupabase.from("profiles").select("*").eq("id", userId).single(),
     serviceSupabase.from("account_entitlements").select("*").eq("user_id", userId).single(),
+    serviceSupabase.rpc('is_premium_active', { p_user_id: userId }),
   ]);
   if (profileError) throw mapDatabaseError(profileError);
   if (entitlementError) throw mapDatabaseError(entitlementError);
-  const active = entitlement.premium_active && (!entitlement.premium_expires_at || new Date(entitlement.premium_expires_at) > new Date());
+  if (verified.error) throw mapDatabaseError(verified.error);
+  const active = verified.data === true && hasBoundedPremium(entitlement, env.REVENUECAT_MONTHLY_PRODUCT_ID ?? '');
   return {
     id: profile.id,
     preferred_currency: profile.preferred_currency,
@@ -37,7 +47,7 @@ async function accountResponse(userId: string): Promise<Json> {
 }
 
 export const accountRoutes: FastifyPluginAsync = async (app) => {
-  app.get("/me", { preHandler: requireAuth }, async (request) => accountResponse(request.auth.userId));
+  app.get("/me", { preHandler: requireAuth }, async (request) => accountResponse(request.auth.userId, true));
 
   app.patch("/me/settings", { preHandler: requireAuth }, async (request, reply) => {
     const body = parseBody(z.object({
@@ -85,12 +95,12 @@ export const accountRoutes: FastifyPluginAsync = async (app) => {
 
 export const subscriptionRoutes: FastifyPluginAsync = async (app) => {
   app.get("/subscription", { preHandler: requireAuth }, async (request) => {
-    const account = await accountResponse(request.auth.userId) as Record<string, Json | undefined>;
+    const account = await accountResponse(request.auth.userId, true) as Record<string, Json | undefined>;
     return account.premium;
   });
 
   app.post("/subscription/restore", { preHandler: requireAuth }, async (request, reply) => {
-    const body = parseBody(z.object({ app_user_id: z.string().min(1).optional() }), request.body ?? {});
+    const body = parseBody(z.object({}).strict(), request.body ?? {});
     const key = requireIdempotencyKey(request);
     const result = await runIdempotent({
       userId: request.auth.userId,
@@ -98,13 +108,15 @@ export const subscriptionRoutes: FastifyPluginAsync = async (app) => {
       key,
       requestBody: body,
       execute: async () => {
+        await reconcileSubscription(request.auth.userId);
         const account = await accountResponse(request.auth.userId) as Record<string, Json | undefined>;
         return {
           status: 200,
           body: {
-            reconciled: false,
+            reconciled: true,
             plan: (account.plan as string) ?? "free",
-            message: "Purchase restoration must first be completed in the mobile RevenueCat SDK; the webhook then reconciles this database.",
+            message: account.plan === 'premium' ? 'Premium is active.' : 'No active Premium subscription was found.',
+            account,
           },
         };
       },
