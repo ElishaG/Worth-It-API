@@ -1,12 +1,14 @@
 # Verified subscription rollout
 
-This release reconciles RevenueCat customer state into a server-owned snapshot. The mobile release uses product `com.worthitscan.app.premium.monthly`. The default entitlement identifier is `premium`; verify it against RevenueCat before deploying.
+This release reconciles RevenueCat customer state into a server-owned snapshot. The mobile release uses product `com.worthitscan.app.premium.monthly`. The live entitlement identifier is `Worth It? Premium`, verified in RevenueCat on September 6, 2026. Both services default to this exact identifier; correct any existing `premium` environment override before deploying.
 
 ## Required configuration
 
+Live dashboard inspection on September 6 found no RevenueCat secret API keys and no configured webhook destinations. These integrations must be created and connected before rollout; no key or webhook was created during that inspection. Apple credentials report valid, but no Apple server notifications have been received.
+
 - `REVENUECAT_SECRET_API_KEY`: server-only RevenueCat v1 secret key with subscriber-read access. Store it in the API host's secret settings, never in Git or EXPO_PUBLIC variables.
 - `REVENUECAT_MONTHLY_PRODUCT_ID=com.worthitscan.app.premium.monthly`
-- `REVENUECAT_ENTITLEMENT_ID=premium` (or the verified identifier, changed in both services).
+- `REVENUECAT_ENTITLEMENT_ID="Worth It? Premium"`
 - `REVENUECAT_WEBHOOK_AUTH`: must exactly match the RevenueCat webhook Authorization header.
 
 Apple sandbox is intentionally supported for App Review and TestFlight. Test Store/promotional grants, missing transactions, refunds and subscriptions without an expiry do not grant access.

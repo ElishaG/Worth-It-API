@@ -29,7 +29,7 @@ const EnvSchema = z.object({
   DEFAULT_FIXED_FEE_AMOUNT_MINOR: z.coerce.number().int().min(0).default(0),
   DEFAULT_TARGET_MARGIN_RATE: z.coerce.number().min(0).max(0.95).default(0.2),
   REVENUECAT_WEBHOOK_AUTH: z.string().optional(),
-  REVENUECAT_ENTITLEMENT_ID: z.string().default("premium"),
+  REVENUECAT_ENTITLEMENT_ID: z.string().default("Worth It? Premium"),
   REVENUECAT_SECRET_API_KEY: z.string().optional(),
   REVENUECAT_MONTHLY_PRODUCT_ID: z.string().min(1).default('com.worthitscan.app.premium.monthly'),
   AD_WEBHOOK_SECRET: z.string().optional(),
