@@ -10,7 +10,7 @@ import type { Json } from "../database.types.js";
 const RevenueCatEvent = z.object({
   id: z.string().min(1),
   type: z.string().min(1),
-  app_user_id: z.string().uuid(),
+  app_user_id: z.string().min(1),
   aliases: z.array(z.string()).optional(),
   entitlement_ids: z.array(z.string()).optional(),
   product_id: z.string().nullable().optional(),
@@ -23,6 +23,23 @@ const RevenueCatEvent = z.object({
 
 function isoFromMs(value: number | null | undefined): string | null {
   return value == null ? null : new Date(value).toISOString();
+}
+
+function isUuid(value: string): boolean {
+  return z.string().uuid().safeParse(value).success;
+}
+
+function resolveWorthItUserId(event: z.infer<typeof RevenueCatEvent>): string {
+  if (isUuid(event.app_user_id)) return event.app_user_id;
+
+  const aliasUserId = event.aliases?.find((alias) => isUuid(alias));
+  if (aliasUserId) return aliasUserId;
+
+  throw new ApiError(
+    400,
+    "revenuecat_user_unresolved",
+    "RevenueCat event does not contain a Worth It user UUID in app_user_id or aliases.",
+  );
 }
 
 function mapEvent(type: string): { eventType: "premium_activated" | "premium_renewed" | "premium_expired" | "premium_revoked" | "premium_restored"; active: boolean } | null {
@@ -54,6 +71,7 @@ export const revenueCatWebhookRoutes: FastifyPluginAsync = async (app) => {
 
     const body = parseBody(z.object({ api_version: z.string().optional(), event: RevenueCatEvent }), request.body);
     const event = body.event;
+    const worthItUserId = resolveWorthItUserId(event);
     const mapping = mapEvent(event.type);
     const entitlementMatches = event.entitlement_ids?.includes(env.REVENUECAT_ENTITLEMENT_ID) ?? false;
 
@@ -61,7 +79,7 @@ export const revenueCatWebhookRoutes: FastifyPluginAsync = async (app) => {
       provider: "revenuecat",
       external_event_id: event.id,
       event_type: event.type,
-      user_id: event.app_user_id,
+      user_id: worthItUserId,
       signature_verified: true,
       processing_status: mapping && entitlementMatches ? "verified" : "processed",
       payload: JSON.parse(JSON.stringify(body)) as Json,
@@ -73,7 +91,7 @@ export const revenueCatWebhookRoutes: FastifyPluginAsync = async (app) => {
 
     if (mapping && entitlementMatches) {
       const { error } = await serviceSupabase.rpc("apply_premium_entitlement", {
-        p_user_id: event.app_user_id,
+        p_user_id: worthItUserId,
         p_event_type: mapping.eventType,
         p_external_event_id: event.id,
         p_active: mapping.active,
