@@ -14,6 +14,7 @@ const RevenueCatSubscription = z.object({
   grace_period_expires_date: z.string().nullable().optional(),
   purchase_date: z.string().nullable().optional(),
   original_purchase_date: z.string().nullable().optional(),
+  refunded_at: z.string().nullable().optional(),
   store: z.string().nullable().optional(),
   is_sandbox: z.boolean().optional(),
 }).passthrough();
@@ -149,10 +150,11 @@ export async function getRevenueCatPremiumState(appUserId: string): Promise<Reve
   // being activated without payment confirmation. A valid Worth It Premium state
   // therefore requires both the configured entitlement and a matching App Store
   // subscription record in RevenueCat. Temporary/promotional entitlement grants
-  // do not satisfy this check.
+  // and refunded transactions do not satisfy this check.
   const active = Boolean(
     entitlement &&
       subscription &&
+      !subscription.refunded_at &&
       isAppStoreSubscription(subscription.store) &&
       windowIsActive(entitlement.expires_date, entitlement.grace_period_expires_date, nowMs) &&
       windowIsActive(subscription.expires_date, subscription.grace_period_expires_date, nowMs),
