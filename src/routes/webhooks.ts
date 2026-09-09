@@ -38,6 +38,29 @@ function resolveWorthItUserId(event: z.infer<typeof RevenueCatEvent>): string | 
   return event.aliases?.find((alias) => isUuid(alias)) ?? null;
 }
 
+async function resolveExistingWorthItUserId(
+  event: z.infer<typeof RevenueCatEvent>,
+): Promise<string | null> {
+  // RevenueCat's dashboard TEST event uses a synthetic customer identity. Never
+  // attach that synthetic UUID to webhook_events because user_id has a foreign
+  // key to profiles and the test customer does not exist in Worth It.
+  if (event.type === "TEST") return null;
+
+  const candidate = resolveWorthItUserId(event);
+  if (!candidate) return null;
+
+  const { data, error } = await serviceSupabase
+    .from("profiles")
+    .select("id")
+    .eq("id", candidate)
+    .maybeSingle();
+  if (error) throw mapDatabaseError(error);
+
+  // Real RevenueCat events can also reference an old/foreign customer UUID.
+  // Only persist/apply an ID that actually belongs to a Worth It profile.
+  return data?.id ?? null;
+}
+
 function mapEvent(type: string): { eventType: "premium_activated" | "premium_renewed" | "premium_expired" | "premium_revoked" | "premium_restored"; active: boolean } | null {
   switch (type) {
     case "INITIAL_PURCHASE":
@@ -72,7 +95,7 @@ export const revenueCatWebhookRoutes: FastifyPluginAsync = async (app) => {
     const event = body.event;
     const mapping = mapEvent(event.type);
     const entitlementMatches = event.entitlement_ids?.includes(env.REVENUECAT_ENTITLEMENT_ID) ?? false;
-    const worthItUserId = resolveWorthItUserId(event);
+    const worthItUserId = await resolveExistingWorthItUserId(event);
 
     const shouldApply = Boolean(mapping && entitlementMatches && worthItUserId);
     const unresolvedPremiumEvent = Boolean(mapping && entitlementMatches && !worthItUserId);
@@ -90,7 +113,7 @@ export const revenueCatWebhookRoutes: FastifyPluginAsync = async (app) => {
           : "processed",
       error_code: unresolvedPremiumEvent ? "revenuecat_user_unresolved" : null,
       error_detail: unresolvedPremiumEvent
-        ? "RevenueCat event did not contain the Worth It Supabase UUID in app_user_id, original_app_user_id, or aliases."
+        ? "RevenueCat event did not resolve to an existing Worth It Supabase profile."
         : null,
       payload: JSON.parse(JSON.stringify(body)) as Json,
       verified_at: new Date().toISOString(),
