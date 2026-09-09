@@ -6,6 +6,11 @@ const optionalUrlList = z
   .default("")
   .transform((value) => value.split(",").map((item) => item.trim()).filter(Boolean));
 
+const optionalNonEmptyString = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.string().min(1).optional(),
+);
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   SUPABASE_URL: z.string().url(),
@@ -29,7 +34,7 @@ const EnvSchema = z.object({
   DEFAULT_FIXED_FEE_AMOUNT_MINOR: z.coerce.number().int().min(0).default(0),
   DEFAULT_TARGET_MARGIN_RATE: z.coerce.number().min(0).max(0.95).default(0.2),
   REVENUECAT_WEBHOOK_AUTH: z.string().optional(),
-  REVENUECAT_API_KEY: z.string().min(1).optional(),
+  REVENUECAT_API_KEY: optionalNonEmptyString,
   REVENUECAT_ENTITLEMENT_ID: z.string().default("premium"),
   AD_WEBHOOK_SECRET: z.string().optional(),
 });
