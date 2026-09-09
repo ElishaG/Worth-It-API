@@ -11,8 +11,9 @@ const RevenueCatEvent = z.object({
   id: z.string().min(1),
   type: z.string().min(1),
   app_user_id: z.string().min(1),
-  aliases: z.array(z.string()).optional(),
-  entitlement_ids: z.array(z.string()).optional(),
+  original_app_user_id: z.string().nullish(),
+  aliases: z.array(z.string()).nullish(),
+  entitlement_ids: z.array(z.string()).nullish(),
   product_id: z.string().nullable().optional(),
   store: z.string().nullable().optional(),
   purchased_at_ms: z.number().nullable().optional(),
@@ -25,21 +26,16 @@ function isoFromMs(value: number | null | undefined): string | null {
   return value == null ? null : new Date(value).toISOString();
 }
 
-function isUuid(value: string): boolean {
-  return z.string().uuid().safeParse(value).success;
+function isUuid(value: string | null | undefined): value is string {
+  return Boolean(value) && z.string().uuid().safeParse(value).success;
 }
 
-function resolveWorthItUserId(event: z.infer<typeof RevenueCatEvent>): string {
+function resolveWorthItUserId(event: z.infer<typeof RevenueCatEvent>): string | null {
+  // RevenueCat recommends checking the current ID, original ID, and aliases.
+  // Worth It uses the authenticated Supabase UUID as its custom App User ID.
   if (isUuid(event.app_user_id)) return event.app_user_id;
-
-  const aliasUserId = event.aliases?.find((alias) => isUuid(alias));
-  if (aliasUserId) return aliasUserId;
-
-  throw new ApiError(
-    400,
-    "revenuecat_user_unresolved",
-    "RevenueCat event does not contain a Worth It user UUID in app_user_id or aliases.",
-  );
+  if (isUuid(event.original_app_user_id)) return event.original_app_user_id;
+  return event.aliases?.find((alias) => isUuid(alias)) ?? null;
 }
 
 function mapEvent(type: string): { eventType: "premium_activated" | "premium_renewed" | "premium_expired" | "premium_revoked" | "premium_restored"; active: boolean } | null {
@@ -56,24 +52,30 @@ function mapEvent(type: string): { eventType: "premium_activated" | "premium_ren
     case "REFUND":
       return { eventType: "premium_revoked", active: false };
     default:
-      // In particular, TEMPORARY_ENTITLEMENT_GRANT is deliberately ignored.
-      // Worth It must not mark an account premium unless RevenueCat reports a
-      // completed subscription lifecycle event backed by the App Store.
+      // CANCELLATION does not end access immediately, and temporary grants must
+      // never be treated as proof of an App Store payment.
       return null;
   }
 }
 
 export const revenueCatWebhookRoutes: FastifyPluginAsync = async (app) => {
   app.post("/webhooks/revenuecat", async (request, reply) => {
-    if (!env.REVENUECAT_WEBHOOK_AUTH) throw new ApiError(503, "webhook_not_configured", "REVENUECAT_WEBHOOK_AUTH is not configured.");
+    if (!env.REVENUECAT_WEBHOOK_AUTH) {
+      throw new ApiError(503, "webhook_not_configured", "REVENUECAT_WEBHOOK_AUTH is not configured.");
+    }
     const authorization = request.headers.authorization ?? "";
-    if (!safeEqual(authorization, env.REVENUECAT_WEBHOOK_AUTH)) throw new ApiError(401, "invalid_webhook_authorization", "Invalid RevenueCat webhook authorization.");
+    if (!safeEqual(authorization, env.REVENUECAT_WEBHOOK_AUTH)) {
+      throw new ApiError(401, "invalid_webhook_authorization", "Invalid RevenueCat webhook authorization.");
+    }
 
     const body = parseBody(z.object({ api_version: z.string().optional(), event: RevenueCatEvent }), request.body);
     const event = body.event;
-    const worthItUserId = resolveWorthItUserId(event);
     const mapping = mapEvent(event.type);
     const entitlementMatches = event.entitlement_ids?.includes(env.REVENUECAT_ENTITLEMENT_ID) ?? false;
+    const worthItUserId = resolveWorthItUserId(event);
+
+    const shouldApply = Boolean(mapping && entitlementMatches && worthItUserId);
+    const unresolvedPremiumEvent = Boolean(mapping && entitlementMatches && !worthItUserId);
 
     const { error: eventInsertError } = await serviceSupabase.from("webhook_events").upsert({
       provider: "revenuecat",
@@ -81,15 +83,23 @@ export const revenueCatWebhookRoutes: FastifyPluginAsync = async (app) => {
       event_type: event.type,
       user_id: worthItUserId,
       signature_verified: true,
-      processing_status: mapping && entitlementMatches ? "verified" : "processed",
+      processing_status: shouldApply
+        ? "verified"
+        : unresolvedPremiumEvent
+          ? "rejected"
+          : "processed",
+      error_code: unresolvedPremiumEvent ? "revenuecat_user_unresolved" : null,
+      error_detail: unresolvedPremiumEvent
+        ? "RevenueCat event did not contain the Worth It Supabase UUID in app_user_id, original_app_user_id, or aliases."
+        : null,
       payload: JSON.parse(JSON.stringify(body)) as Json,
       verified_at: new Date().toISOString(),
-      processed_at: mapping && entitlementMatches ? null : new Date().toISOString(),
+      processed_at: shouldApply ? null : new Date().toISOString(),
       retention_until: new Date(Date.now() + 365 * 86_400_000).toISOString(),
     }, { onConflict: "provider,external_event_id", ignoreDuplicates: true });
     if (eventInsertError) throw mapDatabaseError(eventInsertError);
 
-    if (mapping && entitlementMatches) {
+    if (shouldApply && mapping && worthItUserId) {
       const { error } = await serviceSupabase.rpc("apply_premium_entitlement", {
         p_user_id: worthItUserId,
         p_event_type: mapping.eventType,
@@ -104,12 +114,30 @@ export const revenueCatWebhookRoutes: FastifyPluginAsync = async (app) => {
         p_metadata: body,
       } as never);
       if (error) {
-        await serviceSupabase.from("webhook_events").update({ processing_status: "failed", error_code: error.code, error_detail: error.message }).eq("provider", "revenuecat").eq("external_event_id", event.id);
+        await serviceSupabase
+          .from("webhook_events")
+          .update({ processing_status: "failed", error_code: error.code, error_detail: error.message })
+          .eq("provider", "revenuecat")
+          .eq("external_event_id", event.id);
         throw mapDatabaseError(error);
       }
-      await serviceSupabase.from("webhook_events").update({ processing_status: "processed", processed_at: new Date().toISOString() }).eq("provider", "revenuecat").eq("external_event_id", event.id);
+      await serviceSupabase
+        .from("webhook_events")
+        .update({ processing_status: "processed", processed_at: new Date().toISOString() })
+        .eq("provider", "revenuecat")
+        .eq("external_event_id", event.id);
     }
 
-    return reply.status(200).send({ received: true });
+    // RevenueCat dashboard TEST events use synthetic identities. They are valid
+    // connectivity checks and must receive a 2xx even though no user entitlement
+    // is changed. Real events that cannot be mapped are also acknowledged and
+    // logged as rejected; the authenticated server reconciliation endpoint can
+    // recover the account state when the user next opens/restores the app.
+    return reply.status(200).send({
+      received: true,
+      test: event.type === "TEST",
+      entitlement_applied: shouldApply,
+      user_resolved: Boolean(worthItUserId),
+    });
   });
 };
