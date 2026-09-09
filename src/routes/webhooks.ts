@@ -33,13 +33,15 @@ function mapEvent(type: string): { eventType: "premium_activated" | "premium_ren
       return { eventType: "premium_renewed", active: true };
     case "UNCANCELLATION":
     case "SUBSCRIPTION_EXTENDED":
-    case "TEMPORARY_ENTITLEMENT_GRANT":
       return { eventType: "premium_restored", active: true };
     case "EXPIRATION":
       return { eventType: "premium_expired", active: false };
     case "REFUND":
       return { eventType: "premium_revoked", active: false };
     default:
+      // In particular, TEMPORARY_ENTITLEMENT_GRANT is deliberately ignored.
+      // Worth It must not mark an account premium unless RevenueCat reports a
+      // completed subscription lifecycle event backed by the App Store.
       return null;
   }
 }
