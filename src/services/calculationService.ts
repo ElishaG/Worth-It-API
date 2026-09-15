@@ -37,6 +37,30 @@ const VARIANT_TERMS = [
   "parts", "repair", "not working", "broken", "untested", "for parts",
 ];
 
+const APPLE_DEVICE_ACCESSORY_TERMS = [
+  "case", "cover", "screen protector", "tempered glass", "folio", "skin",
+  "sleeve", "keyboard case", "keyboard cover", "stand", "dock", "holder",
+  "lens protector", "camera protector", "replacement housing", "replacement shell",
+  "bumper", "charging cable", "usb cable", "lightning cable", "charger only",
+  "cable only", "case only", "cover only", "screen only", "digitizer only",
+];
+
+const APPLE_DEVICE_CUES = [
+  /\b\d{2,4}\s?gb\b/i,
+  /\b1\s?tb\b/i,
+  /\bunlocked\b/i,
+  /\bsmartphone\b/i,
+  /\btablet\b/i,
+  /\bcellular\b/i,
+  /\bwifi\b/i,
+  /\bwi fi\b/i,
+  /\bimei\b/i,
+  /\bcarrier\b/i,
+  /\bverizon\b/i,
+  /\bat&t\b/i,
+  /\bt mobile\b/i,
+];
+
 const CONDITION_RANK: Record<Database["public"]["Enums"]["item_condition"], number> = {
   unknown: 0,
   for_parts: 1,
@@ -59,6 +83,27 @@ function hasUnmatchedVariantTerm(targetTitle: string, comparableTitle: string): 
   const target = normalize(targetTitle);
   const candidate = normalize(comparableTitle);
   return VARIANT_TERMS.some((term) => candidate.includes(normalize(term)) && !target.includes(normalize(term)));
+}
+
+function isApplePhoneOrTablet(title: string, brand: string | null): boolean {
+  const normalized = normalize(`${brand ?? ""} ${title}`);
+  return normalized.includes("iphone") || normalized.includes("ipad");
+}
+
+function isAccessoryOnlyAppleComparable(item: ScanItemRow, comparableTitle: string): boolean {
+  if (!isApplePhoneOrTablet(item.title, item.brand)) return false;
+
+  const candidate = normalize(comparableTitle);
+  const containsAccessoryTerm = APPLE_DEVICE_ACCESSORY_TERMS.some((term) => candidate.includes(normalize(term)));
+  if (!containsAccessoryTerm) return false;
+
+  // Real device listings frequently mention an included case/cover. Storage,
+  // carrier, cellular/Wi-Fi or IMEI language is a strong signal that the listing
+  // is for the actual iPhone/iPad rather than an accessory made for it.
+  const hasDeviceCue = APPLE_DEVICE_CUES.some((pattern) => pattern.test(comparableTitle));
+  if (hasDeviceCue) return false;
+
+  return true;
 }
 
 function conditionIsCompatible(
@@ -109,11 +154,12 @@ export function calculateAnalysis(input: {
   const warnings = [...(input.providerWarnings ?? [])];
   const displayCurrency = input.scan.preferred_currency;
 
-  // Hard safety filters never relax. These stop clearly wrong variants, parts-only
-  // listings, invalid prices and currencies from contaminating an estimate.
+  // Hard safety filters never relax. These stop clearly wrong variants,
+  // accessory-only listings, invalid prices and currencies from contaminating an estimate.
   const hardClassified = input.comparables.map((comparable) => {
     if (comparable.displayCurrency !== displayCurrency) return { ...comparable, decision: "excluded" as const, exclusionReason: "currency_mismatch" };
     if (comparable.totalDisplayAmountMinor <= 0) return { ...comparable, decision: "excluded" as const, exclusionReason: "invalid_price" };
+    if (isAccessoryOnlyAppleComparable(input.item, comparable.title)) return { ...comparable, decision: "excluded" as const, exclusionReason: "accessory_only_mismatch" };
     if (hasUnmatchedVariantTerm(input.item.title, comparable.title)) return { ...comparable, decision: "excluded" as const, exclusionReason: "variant_or_accessory_mismatch" };
     return { ...comparable, decision: "included" as const, exclusionReason: null };
   });
@@ -122,9 +168,6 @@ export function calculateAnalysis(input: {
   const strictCount = eligible.filter((item) => filterTierAccepts("strict", input.item.condition, item)).length;
   const balancedCount = eligible.filter((item) => filterTierAccepts("balanced", input.item.condition, item)).length;
 
-  // Prefer precision, but do not return zero just because recognition included too
-  // many descriptive details. Relax only relevance/condition tolerance, never the
-  // hard variant/accessory safety rules above.
   const filterTier: FilterTier = strictCount >= 3
     ? "strict"
     : balancedCount >= 3
@@ -232,7 +275,7 @@ export function calculateAnalysis(input: {
       fixed_fee_amount_minor: env.DEFAULT_FIXED_FEE_AMOUNT_MINOR,
       target_margin_rate: env.DEFAULT_TARGET_MARGIN_RATE,
       desired_profit_amount_minor: desiredProfit,
-      pricing_method: "progressive_filtered_median_v3",
+      pricing_method: "progressive_filtered_median_v4",
       filter_tier: filterTier,
       active_listing_adjustment: activeListingAdjustment,
       quick_sale_multiplier: 0.80,

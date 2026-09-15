@@ -67,17 +67,38 @@ export class OpenAIRecognitionProvider implements RecognitionProvider {
   }
 
   async identify(input: RecognitionInput) {
-    const imageParts = input.imageUrls.map((imageUrl) => ({ type: "input_image" as const, image_url: imageUrl, detail: "auto" as const }));
+    // Photo 1 is the required primary view, so keep adaptive detail there. Extra
+    // angles are supporting evidence and can use low detail to cut vision tokens
+    // substantially without discarding the multi-angle signal.
+    const imageParts = input.imageUrls.slice(0, 3).map((imageUrl, index) => ({
+      type: "input_image" as const,
+      image_url: imageUrl,
+      detail: index === 0 ? "auto" as const : "low" as const,
+    }));
+
     const context = [
-      input.barcode ? `Barcode supplied by user: ${input.barcode}` : null,
-      input.categoryHint ? `User category hint: ${input.categoryHint}` : null,
+      input.barcode ? `Barcode: ${input.barcode}` : null,
+      input.categoryHint ? `Category hint: ${input.categoryHint}` : null,
     ].filter(Boolean).join("\n");
 
     const response = await this.client.responses.create({
       model: env.OPENAI_MODEL,
+      max_output_tokens: 900,
       input: [
-        { role: "system", content: [{ type: "input_text", text: "Identify resale items from all supplied user photos as views of the same main item unless the images clearly show otherwise. Return up to three ranked candidates. Choose the best category yourself from electronics, gaming_consoles, collectibles, trading_cards, clothing, shoes, accessories, tools, furniture, or other. Use trading_cards for sports/TCG cards and accessories for items such as wallets, handbags, belts, sunglasses, jewelry, hats, and similar fashion accessories. Be conservative: never invent a model number, serial number, authenticity claim, condition, size, colorway, material, edition, capacity, or accessory that is not visually supported. Keep the title concise and search-friendly, but place visually supported variant details in attributes so exact retail lookup can distinguish otherwise identical products. Prioritize attributes such as color/colorway, size, capacity/storage, material, style/variant/edition, and model identifiers when visible. For clothing and shoes, prioritize visible brand, model/style, size, colorway and condition; put uncertain details in uncertainties rather than forcing them into the title." }] },
-        { role: "user", content: [{ type: "input_text", text: `Identify the main item in these photos for resale-market search. Keep the title concise; do not stuff every visible attribute into it. Put exact visible variant details in attributes instead.\n${context}` }, ...imageParts] },
+        {
+          role: "system",
+          content: [{
+            type: "input_text",
+            text: "Identify the resale item shown across the supplied photos. Treat all photos as views of one main item unless clearly different. Return up to 3 ranked candidates. Choose the best category from electronics, gaming_consoles, collectibles, trading_cards, clothing, shoes, accessories, tools, furniture, other. Never invent model, serial, authenticity, condition, size, capacity, colorway, material, edition, or accessories. Keep title concise/search-friendly. Put only visually supported variant details in attributes; uncertain details go in uncertainties. Prioritize brand, model/style, storage/capacity, size, color/colorway, material, edition and visible identifiers.",
+          }],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: `Identify this item for resale-market search.${context ? `\n${context}` : ""}` },
+            ...imageParts,
+          ],
+        },
       ],
       text: { format: { type: "json_schema", name: "worth_it_item_candidates", strict: true, schema: responseSchema } },
     });
@@ -101,7 +122,7 @@ export class OpenAIRecognitionProvider implements RecognitionProvider {
       uncertainties: candidate.uncertainties,
       provider: "openai",
       providerModel: env.OPENAI_MODEL,
-      promptVersion: "recognition-v1.3-ai-category",
+      promptVersion: "recognition-v1.4-cost-optimized",
     }));
   }
 }
