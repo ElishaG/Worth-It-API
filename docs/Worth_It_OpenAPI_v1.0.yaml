@@ -542,18 +542,64 @@ paths:
                   const: scan_unlock
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
+  /ad-rewards/challenges/{challenge_id}:
+    get:
+      summary: Get owned ad challenge status and server-verified transaction
+      tags: [Ads]
+      parameters:
+      - name: challenge_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Challenge status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challenge_id, status, granted, provider_transaction_id, expires_at]
+                properties:
+                  challenge_id: {type: string, format: uuid}
+                  status: {type: string, enum: [pending, verified, claimed, expired, rejected]}
+                  granted: {type: boolean}
+                  provider_transaction_id: {type: [string, 'null']}
+                  expires_at: {type: string, format: date-time}
+        '404':
+          description: Challenge absent or owned by another account
   /ad-rewards/claims:
     post:
       summary: Claim one scan after verified ad completion
+      description: AdMob uses the transaction established by Google's signed SSV callback. Repeat with the same idempotency key after a pending response.
       tags:
       - Ads
       responses:
         '200':
-          description: Success
+          description: Reward granted or already claimed
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/User'
+                type: object
+                properties:
+                  granted: {type: boolean, const: true}
+                  already_claimed: {type: boolean}
+                  provider_transaction_id: {type: string}
+                  available_scan_credits: {type: integer}
+        '202':
+          description: Awaiting Google's verification; this response is not cached as a completed claim
+          headers:
+            Retry-After:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  granted: {type: boolean, const: false}
+                  status: {type: string, const: verification_pending}
+                  retry_after_ms: {type: integer}
+        '410':
+          description: Verification window has ended
         '400':
           description: Bad request
           content:
@@ -580,16 +626,13 @@ paths:
               type: object
               required:
               - challenge_id
-              - provider_transaction_id
               properties:
                 challenge_id:
                   type: string
                   format: uuid
                 provider_transaction_id:
                   type: string
-                verification_payload:
-                  type: object
-                  additionalProperties: true
+                  description: Required for generic providers; optional and ignored for AdMob, which uses the signed server transaction.
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
   /subscription:
@@ -938,6 +981,25 @@ paths:
               additionalProperties: true
       security:
       - webhookSignature: []
+  /webhooks/admob/ssv:
+    get:
+      summary: Verify Google's ECDSA-signed rewarded-ad callback and grant once
+      description: Google sends ad_network, ad_unit, custom_data, reward_amount, reward_item, timestamp, transaction_id, user_id, signature and key_id as an ordered signed query. custom_data is JSON containing challenge_id and challenge_token. Signature and key_id must be the last two parameters. See ADMOB_REWARDS_RELEASE.md for configuration.
+      tags: [Webhooks]
+      security: []
+      responses:
+        '200':
+          description: Verified and granted, or duplicate already granted
+        '400':
+          description: Invalid parameters, challenge or earned time
+        '401':
+          description: Invalid ECDSA signature
+        '403':
+          description: Unapproved ad unit or challenge/user mismatch
+        '409':
+          description: Transaction reuse or challenge state conflict
+        '503':
+          description: Signing keys unavailable or AdMob unconfigured; Google may retry
   /webhooks/ad-provider:
     post:
       summary: Receive ad provider server-side verification

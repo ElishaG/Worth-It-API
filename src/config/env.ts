@@ -37,6 +37,7 @@ const EnvSchema = z.object({
   REVENUECAT_API_KEY: optionalNonEmptyString,
   REVENUECAT_ENTITLEMENT_ID: z.string().default("premium"),
   AD_WEBHOOK_SECRET: z.string().optional(),
+  ADMOB_REWARDED_AD_UNIT_IDS: optionalUrlList.pipe(z.array(z.string().regex(/^(?:ca-app-pub-\d+\/)?\d+$/))),
 });
 
 const parsed = EnvSchema.safeParse(process.env);
