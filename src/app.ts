@@ -12,7 +12,18 @@ import { revenueCatWebhookRoutes } from "./routes/webhooks.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: { level: env.LOG_LEVEL },
+    logger: {
+      level: env.LOG_LEVEL,
+      serializers: {
+        req: (request) => ({
+          method: request.method,
+          // SSV custom_data contains the challenge token. Keep it out of logs.
+          url: request.url?.startsWith("/v1/webhooks/admob/ssv") ? request.url.split("?")[0] : request.url,
+          hostname: request.hostname,
+          remoteAddress: request.ip,
+        }),
+      },
+    },
     requestIdHeader: "x-request-id",
     trustProxy: true,
     bodyLimit: 1_048_576,

@@ -1768,6 +1768,17 @@ export type Database = {
         Args: { p_challenge_id: string; p_provider_transaction_id: string }
         Returns: Json
       }
+      record_admob_reward: {
+        Args: {
+          p_challenge_id: string
+          p_challenge_token_hash: string
+          p_user_id: string
+          p_transaction_id: string
+          p_rewarded_at: string
+          p_ad_unit: string
+        }
+        Returns: Json
+      }
       is_premium_active: { Args: { p_user_id: string }; Returns: boolean }
       is_service_actor: { Args: never; Returns: boolean }
       record_inventory_sale: {
