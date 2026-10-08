@@ -251,4 +251,3 @@ end;
 $test$;
 select current_setting('worthit.staging_test_results')::jsonb as passed_tests;
 rollback;
-
