@@ -8,7 +8,7 @@ create function public.is_service_actor() returns boolean language sql stable as
 create type public.ad_challenge_status as enum ('pending','verified','claimed','expired','rejected');
 create type public.webhook_provider as enum ('revenuecat','ad_provider');
 create type public.webhook_processing_status as enum ('received','processed','failed','ignored');
-create type public.entitlement_event_type as enum ('rewarded_ad_grant','premium_activated');
+create type public.entitlement_event_type as enum ('rewarded_ad_grant','premium_activated','premium_renewed','premium_expired','premium_revoked','premium_restored');
 create table public.profiles(id uuid primary key);
 create table public.account_entitlements (
   user_id uuid primary key references public.profiles(id),

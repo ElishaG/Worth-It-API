@@ -21,7 +21,9 @@ async function record(id = challenge, transaction = tx, options: { token?: strin
 beforeEach(async () => {
   db = new PGlite();
   await db.exec(readFileSync(new URL("./fixtures/reward-schema.sql", import.meta.url), "utf8"));
+  await db.exec(readFileSync(new URL("./fixtures/legacy-reward-functions.sql", import.meta.url), "utf8"));
   await db.exec(migration);
+  await db.exec(readFileSync(new URL("../supabase/migrations/20261008023317_restrict_legacy_reward_rpcs.sql", import.meta.url), "utf8"));
   await db.exec(`set request.jwt.claim.role = 'service_role';
     insert into profiles values ('${user}'),('${other}');
     insert into account_entitlements(user_id,available_scan_credits,reserved_scan_credits,premium_active,
