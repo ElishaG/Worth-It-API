@@ -62,7 +62,9 @@ function callback() {
 beforeEach(async () => {
   state.db = new PGlite(); state.executions = 0;
   await state.db.exec(readFileSync(new URL("./fixtures/reward-schema.sql",import.meta.url),"utf8"));
+  await state.db.exec(readFileSync(new URL("./fixtures/legacy-reward-functions.sql",import.meta.url),"utf8"));
   await state.db.exec(readFileSync(new URL("../supabase/migrations/20261008014752_admob_reward_verification.sql",import.meta.url),"utf8"));
+  await state.db.exec(readFileSync(new URL("../supabase/migrations/20261008023317_restrict_legacy_reward_rpcs.sql",import.meta.url),"utf8"));
   await state.db.exec(`set request.jwt.claim.role='service_role';
     insert into profiles values ('${user}'); insert into account_entitlements(user_id) values ('${user}');
     insert into ad_reward_challenges(id,user_id,provider,challenge_token_hash,created_at,expires_at)
